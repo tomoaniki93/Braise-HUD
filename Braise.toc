@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: |cffFFD100Braise|r |cffC9A252- HUD vivant|r
+## Notes: An animated combat halo for WoW: Forever. Breathes out of combat, ignites in combat.
+## Notes-frFR: Un halo de combat animé pour WoW : Forever. Respire hors combat, s'embrase en combat.
+## Category: |cffC9A252HUD|r
+## Author: TomoAniki
+## Version: 1.8.0
+## SavedVariables: BraiseDB
+## AddonCompartmentFunc: Braise_OnAddonCompartmentClick
+## IconTexture: Interface\AddOns\Braise\Media\Glow.tga
+
+Core.lua
+Fx.lua
+Halo.lua
+Signs.lua
+Options.lua
