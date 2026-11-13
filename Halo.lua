@@ -37,11 +37,12 @@ local root, breath, rings, texts
 local arcL, arcR, tgt, pet, tot
 local hpText, pwText, timerText, ticker
 local card, mover
+local PlaceAll           -- re-applies every text and name position (defined below)
 
 -- ---------------------------------------------------------------------
 -- Building blocks
 -- ---------------------------------------------------------------------
-local function MakeArc(side, parent, k)
+local function MakeArc(side, parent, k, key, label)
     local a = {}
     k = k or 1
     local file = side < 0 and "ArcL" or "ArcR"
@@ -70,15 +71,30 @@ local function MakeArc(side, parent, k)
     a.flash:SetBlendMode("ADD")
     a.flash:SetAlpha(0)
 
+    -- off: animation offset along the radius; the player's own nudge
+    -- (move mode) is added on top.
     function a.SetOffset(off)
+        a.off = off
+        local ox, oy = B.Off(key)
         a.frame:ClearAllPoints()
         if side < 0 then
-            a.frame:SetPoint("LEFT", parent, "CENTER", -ARC_CENTER * k - off, 0)
+            a.frame:SetPoint("LEFT", parent, "CENTER", -ARC_CENTER * k - off + ox, oy)
         else
-            a.frame:SetPoint("RIGHT", parent, "CENTER", ARC_CENTER * k + off, 0)
+            a.frame:SetPoint("RIGHT", parent, "CENTER", ARC_CENTER * k + off + ox, oy)
         end
     end
     a.SetOffset(0)
+
+    -- Handle: a strip over the outer edge of the arc, narrow enough not
+    -- to cover the neighbouring arcs.
+    B.Movable(key, label, function(h)
+        local edge = side < 0 and "LEFT" or "RIGHT"
+        h:SetSize(30, ARC_H * k)
+        h:SetPoint(edge, a.frame, edge)
+    end, function()
+        a.SetOffset(a.off or 0)
+        PlaceAll()
+    end)
     return a
 end
 
@@ -216,7 +232,7 @@ local function UpdateTargetPower(instant)
     local cur, mx = UnitPower("target", pt), UnitPowerMax("target", pt)
     -- Many creatures have no resource at all: no arc for them.
     local known = B.Num(mx)
-    local has = not (known and known <= 0)
+    local has = Halo.preview or not (known and known <= 0)
     tgt.pw.frame:SetShown(has)
     tgt.pwText:SetShown(has)
     if not has then return end
@@ -260,6 +276,11 @@ end
 
 local function UpdateToT()
     if not tot or not tot.on then return end
+    if not B.Flag(UnitExists("targettarget")) then        -- move mode, nothing to show
+        tot.name:SetText("> " .. T("cible de la cible", "target of target"))
+        tot.name:SetTextColor(0.80, 0.77, 0.72)
+        return
+    end
     local cur, mx = UnitHealth("targettarget"), UnitHealthMax("targettarget")
     tot.bar:SetMinMaxValues(0, mx)
     tot.bar:SetValue(cur)
@@ -285,7 +306,7 @@ end
 --- Called when the target, or the target's target, changes.
 local function ToTChanged()
     if not tot then return end
-    local want = B.db.tot and B.Flag(UnitExists("targettarget"))
+    local want = B.db.tot and (B.Flag(UnitExists("targettarget")) or Halo.preview)
     if want then
         if not tot.on then
             tot.on = true
@@ -306,9 +327,11 @@ local function BuildToT()
     tot:Hide()
     -- Scaling a frame scales its anchor offsets too: divide them back.
     function tot.Place(s)
+        tot.s = s
+        local ox, oy = B.Off("names")
         tot:SetScale(s)
         tot:ClearAllPoints()
-        tot:SetPoint("CENTER", root, "CENTER", 0, TOT_Y / s)
+        tot:SetPoint("CENTER", root, "CENTER", ox / s, (TOT_Y + oy) / s)
     end
     tot.Place(1)
 
@@ -358,9 +381,13 @@ end
 --- Called when the target changes or the option is toggled.
 local function TargetChanged(flash)
     if not tgt then return end
-    local want = B.db.target and B.Flag(UnitExists("target"))
+    local want = B.db.target and (B.Flag(UnitExists("target")) or Halo.preview)
     if want then
-        tgt.name:SetText(UnitName("target") or "")
+        if B.Flag(UnitExists("target")) then
+            tgt.name:SetText(UnitName("target") or "")
+        else
+            tgt.name:SetText(T("Cible", "Target"))          -- move mode, no target
+        end
         local r, g, b = TargetColor()
         tgt.hp.flash:SetVertexColor(r, g, b)
         tgt.pw.flash:SetVertexColor(r, g, b)
@@ -392,8 +419,8 @@ local function BuildTarget()
     tgt:SetAlpha(0)
     tgt:Hide()
     -- Same sides as the player's arcs: health left, power right.
-    tgt.hp = MakeArc(-1, tgt, TARGET_K)
-    tgt.pw = MakeArc(1, tgt, TARGET_K)
+    tgt.hp = MakeArc(-1, tgt, TARGET_K, "thp", T("Vie de la cible", "Target health"))
+    tgt.pw = MakeArc(1, tgt, TARGET_K, "tpw", T("Ressource de la cible", "Target power"))
     function tgt.SetOffset(off)
         tgt.hp.SetOffset(off)
         tgt.pw.SetOffset(off)
@@ -406,6 +433,10 @@ local function BuildTarget()
     tgt.name:SetWidth(240)
     tgt.name:SetJustifyH("CENTER")
     tgt.name:SetWordWrap(false)
+    B.Movable("names", T("Nom de la cible et cible de la cible", "Target name and target of target"), function(h)
+        h:SetSize(200, 42)
+        h:SetPoint("BOTTOM", tgt.name, "BOTTOM", 0, -2)
+    end, function() PlaceAll() end)
     tgt.pct = Text(tgt, 11, true)
     tgt.pct:SetPoint("CENTER", tgt, "CENTER", -180, 166)
     tgt.pct:SetTextColor(0.80, 0.77, 0.72)
@@ -438,7 +469,7 @@ end
 --- Called when the pet appears, changes or leaves, or the option is toggled.
 local function PetChanged()
     if not pet then return end
-    local want = B.db.pet and B.Flag(UnitExists("pet"))
+    local want = B.db.pet and (B.Flag(UnitExists("pet")) or Halo.preview)
     if want then
         if not pet.on then
             -- Summoned: the arcs open outward from the centre.
@@ -460,8 +491,8 @@ local function BuildPet()
     pet:SetPoint("CENTER")
     pet:SetAlpha(0)
     pet:Hide()
-    pet.hp = MakeArc(-1, pet, PET_K)
-    pet.pw = MakeArc(1, pet, PET_K)
+    pet.hp = MakeArc(-1, pet, PET_K, "php", T("Vie du familier", "Pet health"))
+    pet.pw = MakeArc(1, pet, PET_K, "ppw", T("Ressource du familier", "Pet power"))
     function pet.SetOffset(off)
         pet.hp.SetOffset(off)
         pet.pw.SetOffset(off)
@@ -557,6 +588,9 @@ local function BuildCard()
     card:SetSize(CARD_W, CARD_H)
     card:SetPoint("CENTER", B.anchor, "CENTER", 0, CARD_Y)
     card:SetFrameStrata("MEDIUM")
+    B.Movable("card", T("Récap de combat", "Fight recap"), function(h)
+        h:SetAllPoints(card)
+    end, function() PlaceAll() end)
     card:SetAlpha(0)
     card:Hide()
 
@@ -633,7 +667,9 @@ function Halo:Recap(data)
         end
     else
         card.xp:SetText("")
-        card.sub:SetText(T("aucune expérience", "no experience"))
+        -- At the level cap there is nothing to say about experience.
+        local capped = IsPlayerAtEffectiveMaxLevel and IsPlayerAtEffectiveMaxLevel()
+        card.sub:SetText(capped and "" or T("aucune expérience", "no experience"))
         hasBar = false
     end
     card.track:SetShown(hasBar)
@@ -644,8 +680,9 @@ function Halo:Recap(data)
     card:Show()
     B.Tween(card, 0.45, card:GetAlpha(), 1, function(a) card:SetAlpha(a) end)
     B.Tween("card.y", 0.45, CARD_Y - 18, CARD_Y, function(y)
+        local ox, oy = B.Off("card")
         card:ClearAllPoints()
-        card:SetPoint("CENTER", B.anchor, "CENTER", 0, y)
+        card:SetPoint("CENTER", B.anchor, "CENTER", ox, y + oy)
     end)
     B.Tween("card.line", 0.6, 1, CARD_W, function(w) card.line:SetWidth(w) end, B.Ease.inOut)
     if hasBar then
@@ -676,8 +713,9 @@ end
 local CLICK_SEGMENTS, CLICK_PAD = 6, 5
 local clicks = { player = {}, target = {}, pet = {}, targettarget = {} }
 
-local function MakeClick(unit, level)
+local function MakeClick(unit, level, key)
     local btn = CreateFrame("Button", nil, B.anchor, "SecureUnitButtonTemplate")
+    btn.key = key                       -- the element this zone follows in move mode
     btn:SetAttribute("unit", unit)
     btn:SetAttribute("*type1", "target")
     btn:SetAttribute("*type2", "togglemenu")
@@ -696,7 +734,25 @@ local function MakeClick(unit, level)
 end
 
 --- Cover one side arc of the given radius with buttons.
-local function ClickArc(unit, side, radius, level)
+--- Remember a zone's default place; LayoutClicks adds the element's nudge.
+local function Pin(btn, point, x, y)
+    btn.pt, btn.bx, btn.by = point, x, y
+    btn:SetPoint(point, B.anchor, "CENTER", x, y)
+end
+
+local function LayoutClicks()
+    for _, list in pairs(clicks) do
+        if type(list) == "table" then
+            for _, btn in ipairs(list) do
+                local ox, oy = B.Off(btn.key)
+                btn:ClearAllPoints()
+                btn:SetPoint(btn.pt, B.anchor, "CENTER", btn.bx + ox, btn.by + oy)
+            end
+        end
+    end
+end
+
+local function ClickArc(unit, side, radius, level, key)
     local half = math.deg(math.asin((ARC_H / 2 - 6) / 190))     -- half-angle of the slice
     local step = half * 2 / CLICK_SEGMENTS
     for i = 1, CLICK_SEGMENTS do
@@ -705,12 +761,12 @@ local function ClickArc(unit, side, radius, level)
         local x0, x1 = radius * math.cos(a0), radius * math.cos(a1)
         local y0, y1 = radius * math.sin(a0), radius * math.sin(a1)
         local xmin, xmax = math.min(x0, x1) - CLICK_PAD, math.max(x0, x1, i == CLICK_SEGMENTS / 2 and radius or 0) + CLICK_PAD
-        local btn = MakeClick(unit, level)
+        local btn = MakeClick(unit, level, key)
         btn:SetSize(xmax - xmin, math.abs(y1 - y0))
         if side < 0 then
-            btn:SetPoint("BOTTOMRIGHT", B.anchor, "CENTER", -xmin, math.min(y0, y1))
+            Pin(btn, "BOTTOMRIGHT", -xmin, math.min(y0, y1))
         else
-            btn:SetPoint("BOTTOMLEFT", B.anchor, "CENTER", xmin, math.min(y0, y1))
+            Pin(btn, "BOTTOMLEFT", xmin, math.min(y0, y1))
         end
     end
 end
@@ -718,24 +774,25 @@ end
 local function BuildClicks()
     if clicks.built then return end
     clicks.built = true
-    ClickArc("player", -1, 190, 2)
-    ClickArc("player", 1, 190, 2)
+    ClickArc("player", -1, 190, 2, "hp")
+    ClickArc("player", 1, 190, 2, "pw")
     -- The target's zones sit above the player's where the two overlap.
-    ClickArc("target", -1, 190 * TARGET_K, 4)
-    ClickArc("target", 1, 190 * TARGET_K, 4)
-    ClickArc("pet", -1, 190 * PET_K, 3)
-    ClickArc("pet", 1, 190 * PET_K, 3)
-    local name = MakeClick("target", 4)
+    ClickArc("target", -1, 190 * TARGET_K, 4, "thp")
+    ClickArc("target", 1, 190 * TARGET_K, 4, "tpw")
+    ClickArc("pet", -1, 190 * PET_K, 3, "php")
+    ClickArc("pet", 1, 190 * PET_K, 3, "ppw")
+    local name = MakeClick("target", 4, "names")
     name:SetSize(200, 18)
-    name:SetPoint("BOTTOM", B.anchor, "CENTER", 0, 192)
-    local totName = MakeClick("targettarget", 4)
+    Pin(name, "BOTTOM", 0, 192)
+    local totName = MakeClick("targettarget", 4, "names")
     totName:SetSize(140, 20)
-    totName:SetPoint("CENTER", B.anchor, "CENTER", 0, TOT_Y)
+    Pin(totName, "CENTER", 0, TOT_Y)
 end
 
 function Halo:ApplyClicks()
     if not clicks.built or InCombatLockdown() then return end
     local db = B.db
+    LayoutClicks()
     local on = db.click and not (mover and mover:IsShown())
     for _, btn in ipairs(clicks.player) do
         btn:SetShown(on and db.halo)
@@ -755,36 +812,118 @@ end
 -- ---------------------------------------------------------------------
 -- Mover
 -- ---------------------------------------------------------------------
+--- Texts and names follow the element they belong to.
+function PlaceAll()
+    local x, y
+    if hpText then
+        x, y = B.Off("hp")
+        hpText:ClearAllPoints(); hpText:SetPoint("CENTER", texts, "CENTER", -122 + x, -138 + y)
+        x, y = B.Off("pw")
+        pwText:ClearAllPoints(); pwText:SetPoint("CENTER", texts, "CENTER", 122 + x, -138 + y)
+    end
+    if tgt then
+        x, y = B.Off("thp")
+        tgt.pct:ClearAllPoints(); tgt.pct:SetPoint("CENTER", tgt, "CENTER", -180 + x, 166 + y)
+        x, y = B.Off("tpw")
+        tgt.pwText:ClearAllPoints(); tgt.pwText:SetPoint("CENTER", tgt, "CENTER", 180 + x, 166 + y)
+        x, y = B.Off("names")
+        tgt.name:ClearAllPoints(); tgt.name:SetPoint("BOTTOM", tgt, "CENTER", x, 194 + y)
+    end
+    if tot then tot.Place(tot.s or 1) end
+    if card and not card:IsShown() then
+        x, y = B.Off("card")
+        card:ClearAllPoints(); card:SetPoint("CENTER", B.anchor, "CENTER", x, CARD_Y + y)
+    end
+end
+
+local HINT_FR = "Glisse une poignée pour déplacer un élément - clic droit : le remettre en place"
+local HINT_EN = "Drag a handle to move one element - right-click: put it back"
+
+local function Frame4(f, r, g, b, a)
+    for _, p in ipairs({ { "TOPLEFT", "TOPRIGHT", false }, { "BOTTOMLEFT", "BOTTOMRIGHT", false },
+                         { "TOPLEFT", "BOTTOMLEFT", true }, { "TOPRIGHT", "BOTTOMRIGHT", true } }) do
+        local e = f:CreateTexture(nil, "BORDER")
+        e:SetColorTexture(r, g, b, a)
+        e:SetPoint(p[1]); e:SetPoint(p[2])
+        if p[3] then e:SetWidth(1) else e:SetHeight(1) end
+    end
+end
+
+--- One drag handle per movable element.
+local function MakeHandle(m)
+    local h = CreateFrame("Frame", nil, mover)
+    h:EnableMouse(true)
+    h.bg = h:CreateTexture(nil, "BACKGROUND")
+    h.bg:SetAllPoints()
+    h.bg:SetColorTexture(0.79, 0.64, 0.32, 0.22)
+    Frame4(h, 0.79, 0.64, 0.32, 0.8)
+    m.place(h)                  -- anchored to the element: it follows it around
+
+    local function Stop()
+        h:SetScript("OnUpdate", nil)
+    end
+    h:SetScript("OnMouseDown", function(_, button)
+        if button ~= "LeftButton" then return end
+        local cx, cy = GetCursorPosition()
+        local ox, oy = B.Off(m.key)
+        h:SetScript("OnUpdate", function()
+            local x, y = GetCursorPosition()
+            local s = B.anchor:GetEffectiveScale()
+            B.db.offsets[m.key] = { x = math.floor(ox + (x - cx) / s + 0.5), y = math.floor(oy + (y - cy) / s + 0.5) }
+            m.apply()
+        end)
+    end)
+    h:SetScript("OnMouseUp", function(_, button)
+        Stop()
+        if button == "RightButton" then
+            B.db.offsets[m.key] = nil
+            m.apply()
+        end
+    end)
+    h:SetScript("OnHide", Stop)
+    h:SetScript("OnEnter", function()
+        h.bg:SetColorTexture(0.79, 0.64, 0.32, 0.5)
+        mover.info:SetText(m.label)
+    end)
+    h:SetScript("OnLeave", function()
+        h.bg:SetColorTexture(0.79, 0.64, 0.32, 0.22)
+        mover.info:SetText(T(HINT_FR, HINT_EN))
+    end)
+    return h
+end
+
 local function BuildMover()
+    -- The layer that holds every handle.
     mover = CreateFrame("Frame", nil, B.anchor)
-    mover:SetSize(430, 300)
+    mover:SetSize(2, 2)
     mover:SetPoint("CENTER")
     mover:SetFrameStrata("DIALOG")
-    mover:EnableMouse(true)
-    mover:RegisterForDrag("LeftButton")
     mover:Hide()
 
-    local bg = mover:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(0.79, 0.64, 0.32, 0.10)
-    for _, p in ipairs({ { "TOPLEFT", "TOPRIGHT", nil, 1 }, { "BOTTOMLEFT", "BOTTOMRIGHT", nil, 1 },
-                         { "TOPLEFT", "BOTTOMLEFT", 1, nil }, { "TOPRIGHT", "BOTTOMRIGHT", 1, nil } }) do
-        local e = mover:CreateTexture(nil, "BORDER")
-        e:SetColorTexture(0.79, 0.64, 0.32, 0.7)
-        e:SetPoint(p[1]); e:SetPoint(p[2])
-        if p[3] then e:SetWidth(p[3]) else e:SetHeight(p[4]) end
-    end
-    local label = Text(mover, 11, true)
-    label:SetPoint("TOP", 0, -10)
-    label:SetText(T("Glisser pour déplacer - clic droit pour verrouiller",
-                    "Drag to move - right-click to lock"))
+    mover.info = Text(mover, 11, true)
+    mover.info:SetPoint("CENTER", mover, "CENTER", 0, 268)
+    mover.info:SetText(T(HINT_FR, HINT_EN))
 
-    mover:SetScript("OnDragStart", function()
+    -- Centre handle: moves the whole HUD.
+    local all = CreateFrame("Frame", nil, mover)
+    all:SetSize(150, 44)
+    all:SetPoint("CENTER")
+    all:EnableMouse(true)
+    all:RegisterForDrag("LeftButton")
+    local bg = all:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.79, 0.64, 0.32, 0.22)
+    Frame4(all, 0.79, 0.64, 0.32, 0.8)
+    local label = Text(all, 11, true)
+    label:SetPoint("CENTER")
+    label:SetText(T("Tout le HUD", "Whole HUD"))
+
+    all:SetScript("OnDragStart", function()
         if InCombatLockdown() then return end
         B.anchor:SetMovable(true)
         B.anchor:StartMoving()
     end)
-    mover:SetScript("OnDragStop", function()
+    all:SetScript("OnDragStop", function()
         B.anchor:StopMovingOrSizing()
         local ax, ay = B.anchor:GetCenter()
         local ux, uy = UIParent:GetCenter()
@@ -796,20 +935,43 @@ local function BuildMover()
         B.ApplyAnchor()
         B.Call("Refresh")
     end)
-    mover:SetScript("OnMouseUp", function(_, button)
+    all:SetScript("OnMouseUp", function(_, button)
         if button == "RightButton" then Halo:ToggleMover() end
     end)
+    all:SetScript("OnEnter", function()
+        mover.info:SetText(T("Tout le HUD - clic droit : verrouiller", "Whole HUD - right-click: lock"))
+    end)
+    all:SetScript("OnLeave", function() mover.info:SetText(T(HINT_FR, HINT_EN)) end)
+
+    for _, m in ipairs(B.movables) do MakeHandle(m) end
+end
+
+--- Leave move mode (also called when a fight starts).
+local function CloseMover()
+    if not mover or not mover:IsShown() then return end
+    mover:Hide()
+    Halo.preview = false
+    B.Signs:SetPreview(false)
+    TargetChanged()             -- drop the placeholders
+    PetChanged()
+    ToTChanged()
 end
 
 function Halo:ToggleMover()
     if InCombatLockdown() then
-        B.Print(T("le halo ne peut pas être déplacé en combat.", "the halo cannot be moved in combat."))
+        B.Print(T("le HUD ne peut pas être déplacé en combat.", "the HUD cannot be moved in combat."))
         return
     end
     if not mover then BuildMover() end
-    mover:SetShown(not mover:IsShown())
-    Halo:ApplyClicks()
-    ApplyState(0.3)
+    if mover:IsShown() then
+        CloseMover()
+    else
+        mover:Show()
+        -- Show every element, even those with nothing to display right now.
+        Halo.preview = true
+        B.Signs:SetPreview(true)
+    end
+    B.Call("Refresh")           -- also re-places the click zones
 end
 
 -- ---------------------------------------------------------------------
@@ -830,8 +992,8 @@ function Halo:Init()
     local al = breath.ag:CreateAnimation("Alpha")
     al:SetFromAlpha(1); al:SetToAlpha(0.55); al:SetDuration(2.8); al:SetSmoothing("IN_OUT")
 
-    arcL = MakeArc(-1, breath)
-    arcR = MakeArc(1, breath)
+    arcL = MakeArc(-1, breath, 1, "hp", T("Ta vie", "Your health"))
+    arcR = MakeArc(1, breath, 1, "pw", T("Ta ressource", "Your power"))
     BuildTarget()
     BuildPet()
     BuildToT()
@@ -872,6 +1034,7 @@ function Halo:Init()
     end)
 
     BuildCard()
+    PlaceAll()
     BuildClicks()
     Halo:ApplyClicks()
 
@@ -945,6 +1108,7 @@ end
 
 function Halo:CombatStart()
     if not root then return end
+    CloseMover()
     HideCard(0.2)
     ApplyState(0.25)
     ApplyRings()

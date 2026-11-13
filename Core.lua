@@ -63,6 +63,7 @@ B.defaults = {
     x           = 0,
     y           = 0,
     theme       = "classe",
+    offsets     = {},     -- per-element nudges set in move mode: key -> { x, y }
     version     = 2,
 }
 
@@ -252,6 +253,25 @@ function B.ApplyCastBars()
     end
 end
 
+-- ---------------------------------------------------------------------
+-- Movable elements
+-- ---------------------------------------------------------------------
+-- Every bar of the HUD can be nudged away from its place in the halo. An
+-- element registers a key, a label, how to lay a drag handle over itself,
+-- and how to re-apply its position; move mode (Halo.lua) does the rest.
+B.movables = {}
+
+function B.Movable(key, label, place, apply)
+    B.movables[#B.movables + 1] = { key = key, label = label, place = place, apply = apply }
+end
+
+--- The element's offset from its default place, in halo units.
+function B.Off(key)
+    local o = B.db and B.db.offsets and B.db.offsets[key]
+    if o then return o.x or 0, o.y or 0 end
+    return 0, 0
+end
+
 -- Colours ---------------------------------------------------------------
 local classRGB
 local function ClassColor()
@@ -414,7 +434,9 @@ local function Init()
         BraiseDB.theme = "classe"
     end
     for k, v in pairs(B.defaults) do
-        if type(BraiseDB[k]) ~= type(v) then BraiseDB[k] = v end
+        if type(BraiseDB[k]) ~= type(v) then
+            BraiseDB[k] = type(v) == "table" and {} or v      -- never share the default table
+        end
     end
     B.db = BraiseDB
     B.ApplyAnchor()
@@ -476,7 +498,8 @@ local PREFIX = "|cffFFD100Braise|r "
 function B.Print(msg) print(PREFIX .. msg) end
 
 function B.Reset()
-    for k, v in pairs(B.defaults) do B.db[k] = v end
+    for k, v in pairs(B.defaults) do B.db[k] = type(v) == "table" and {} or v end
+    for _, m in ipairs(B.movables) do m.apply() end
     B.ApplyAnchor()
     B.ApplyUnitFrames()
     B.Call("Refresh")

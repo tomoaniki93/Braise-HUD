@@ -56,7 +56,7 @@ end
 
 -- k scales the slice outward (the target's arc is one ring further out);
 -- textY is where the spell name goes.
-local function MakeCast(unit, k, textY)
+local function MakeCast(unit, k, textY, key, label)
     local c = { unit = unit }
 
     c.frame = CreateFrame("Frame", nil, B.anchor)
@@ -66,8 +66,14 @@ local function MakeCast(unit, k, textY)
     c.frame:Hide()
 
     function c.SetOffset(off)
+        c.off = off
+        local ox, oy = B.Off(key)
         c.frame:ClearAllPoints()
-        c.frame:SetPoint("BOTTOM", B.anchor, "CENTER", 0, -CAST_EDGE * k - off)
+        c.frame:SetPoint("BOTTOM", B.anchor, "CENTER", ox, -CAST_EDGE * k - off + oy)
+        if c.text then
+            c.text:ClearAllPoints()
+            c.text:SetPoint("CENTER", B.anchor, "CENTER", ox, textY + oy)
+        end
     end
     c.SetOffset(0)
 
@@ -90,9 +96,16 @@ local function MakeCast(unit, k, textY)
     c.flash:SetAlpha(0)
 
     c.text = B.Text(c.frame, 10, true)
-    c.text:SetPoint("CENTER", B.anchor, "CENTER", 0, textY)
     c.text:SetWidth(170)
     c.text:SetWordWrap(false)
+    c.label = label
+    c.SetOffset(0)
+
+    -- Handle: a strip along the bottom of the arc, clear of the other one.
+    B.Movable(key, label, function(h)
+        h:SetSize(CAST_W * k * 0.62, 22)
+        h:SetPoint("BOTTOM", c.frame, "BOTTOM")
+    end, function() c.SetOffset(c.off or 0) end)
 
     -- While shown: drive the bar by hand when the client has no timer API,
     -- and notice a cast that ended without a STOP event (dead target,
@@ -111,7 +124,7 @@ end
 
 local function HideCast(c)
     c.active = false
-    B.Fade(c.frame, 0, 0.15)
+    if not Signs.preview then B.Fade(c.frame, 0, 0.15) end
 end
 
 local function BeginCast(c)
@@ -219,8 +232,8 @@ local function OnCastEvent(_, event, unit)
 end
 
 local function BuildCasts()
-    MakeCast("player", 1, -163)             -- name tucked inside the curve
-    MakeCast("target", 1.17, -232)          -- name under its own arc
+    MakeCast("player", 1, -163, "castPlayer", T("Ton incantation", "Your cast"))             -- name inside the curve
+    MakeCast("target", 1.17, -232, "castTarget", T("Incantation de la cible", "Target cast")) -- name under its arc
     local ev = CreateFrame("Frame")
     for _, e in ipairs({ "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",
                          "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
@@ -248,7 +261,19 @@ local threat
 local function BuildThreat()
     threat = CreateFrame("Frame", nil, B.anchor)
     threat:SetSize(CAST_W, CAST_H)
-    threat:SetPoint("TOP", B.anchor, "CENTER", 0, CAST_EDGE)
+    function threat.Place()
+        local ox, oy = B.Off("threat")
+        threat:ClearAllPoints()
+        threat:SetPoint("TOP", B.anchor, "CENTER", ox, CAST_EDGE + oy)
+        if threat.text then
+            threat.text:ClearAllPoints()
+            threat.text:SetPoint("CENTER", B.anchor, "CENTER", ox, 163 + oy)
+        end
+    end
+    B.Movable("threat", T("Menace", "Threat"), function(h)
+        h:SetSize(CAST_W * 0.62, 22)
+        h:SetPoint("TOP", threat, "TOP")
+    end, function() threat.Place() end)
     threat:SetAlpha(0)
     threat:Hide()
 
@@ -274,7 +299,7 @@ local function BuildThreat()
     threat.beat:SetFromAlpha(0.15); threat.beat:SetToAlpha(1); threat.beat:SetSmoothing("IN_OUT")
 
     threat.text = B.Text(threat, 10, true)
-    threat.text:SetPoint("CENTER", B.anchor, "CENTER", 0, 163)
+    threat.Place()
 end
 
 local function WriteThreatPct(pct)
@@ -297,7 +322,7 @@ local function UpdateThreat()
         if threat.level then
             threat.level = nil
             threat.pulse:Stop()
-            B.Fade(threat, 0, 0.3)
+            if not Signs.preview then B.Fade(threat, 0, 0.3) end
         end
         return
     end
@@ -348,8 +373,13 @@ end
 -- =====================================================================
 -- COMBO POINTS
 -- =====================================================================
-local COMBO = (Enum and Enum.PowerType and Enum.PowerType.ComboPoints) or 4
-local ENERGY = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
+local PT = (Enum and Enum.PowerType) or {}
+local ENERGY = PT.Energy or 3
+-- The classes that build combo points.
+local CLASS_POINTS = {
+    ROGUE = PT.ComboPoints or 4,
+    DRUID = PT.ComboPoints or 4,        -- cat form only
+}
 local PIP_MAX, PIP_RADIUS, PIP_STEP, PIP_SIZE = 8, 102, 13, 11
 
 local pips = {}
@@ -436,11 +466,12 @@ local playerClass
 
 local function UpdateCombo()
     if not pipHolder then return end
-    local total = B.Num(UnitPowerMax("player", COMBO))
-    local cur = B.Num(UnitPower("player", COMBO))
+    local ptype = CLASS_POINTS[playerClass]
+    local total = ptype and B.Num(UnitPowerMax("player", ptype))
+    local cur = ptype and B.Num(UnitPower("player", ptype))
     local show = B.db.combo and total and cur and total > 0
         and not B.Flag(UnitIsDeadOrGhost("player"))
-        and (playerClass == "ROGUE" or B.Num((UnitPowerType("player"))) == ENERGY)
+        and (playerClass ~= "DRUID" or B.Num((UnitPowerType("player"))) == ENERGY)
     if not show then
         if pipHolder:IsShown() and pipHolder.want ~= 0 then
             pipHolder.want = 0
@@ -704,6 +735,34 @@ function Signs:Init()
             UpdateCombo()
         end
     end)
+end
+
+--- Move mode: show the cast arcs and the threat gauge even when idle.
+function Signs:SetPreview(on)
+    Signs.preview = on
+    if not threat then return end
+    for _, c in pairs(casts) do
+        if on then
+            if not c.active then
+                c.text:SetText(c.label)
+                c.text:SetTextColor(0.80, 0.77, 0.72)
+                c.bar:SetValue(0)
+            end
+            B.Fade(c.frame, 1, 0.2)
+        elseif not c.active then
+            B.Fade(c.frame, 0, 0.2)
+        end
+    end
+    if on then
+        if not threat.level then
+            threat.text:SetText(T("Menace", "Threat"))
+            threat.text:SetTextColor(0.80, 0.77, 0.72)
+            threat.bar:SetValue(0)
+        end
+        B.Fade(threat, 1, 0.2)
+    elseif not threat.level then
+        B.Fade(threat, 0, 0.2)
+    end
 end
 
 function Signs:Refresh()

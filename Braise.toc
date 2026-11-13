@@ -4,7 +4,7 @@
 ## Notes-frFR: Un halo de combat animé pour WoW : Forever. Respire hors combat, s'embrase en combat.
 ## Category: |cffC9A252HUD|r
 ## Author: TomoAniki
-## Version: 1.8.0
+## Version: 1.10.0
 ## SavedVariables: BraiseDB
 ## AddonCompartmentFunc: Braise_OnAddonCompartmentClick
 ## IconTexture: Interface\AddOns\Braise\Media\Glow.tga

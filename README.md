@@ -32,7 +32,7 @@ Copier le dossier `Braise` dans `Interface\AddOns\` du client Forever.
 | `/braise` | ouvrir les réglages |
 | `/braise test` | jouer un combat de démonstration |
 | `/braise level` | jouer l'animation de niveau |
-| `/braise move` | déplacer le halo (clic droit pour verrouiller) |
+| `/braise move` | mode déplacement : une poignée par élément, plus une au centre pour tout le HUD |
 | `/braise reset` | réglages par défaut |
 
 ## Fichiers
